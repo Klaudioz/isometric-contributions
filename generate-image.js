@@ -1,11 +1,10 @@
 import puppeteer from 'puppeteer';
 import fs from 'fs';
 
-// This is the JavaScript from the browser extension, which we will inject.
-// I've copied the relevant parts from the iso.js file you provided.
+// This is the JavaScript from the browser extension.
+// The "import" statement has been removed from the top of this string.
 const isoJsCode = `
-  // NOTE: The 'import' statement has been removed from here.
-  // lodash-es functions will be available globally from the CDN script.
+  // lodash functions will be available on the global 'window._' object from the CDN
   const { toArray, groupBy, last } = window._;
 
   const dateFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
@@ -51,12 +50,8 @@ const isoJsCode = `
 
   const getSettings = () => {
     return new Promise((resolve) => {
-      // Check for user preference, if chrome.storage is available.
-      // The storage API is not supported in content scripts.
-      // https://developer.mozilla.org/Add-ons/WebExtensions/Chrome_incompatibilities#storage
       if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
         chrome.storage.local.get(['toggleSetting'], (settings) => {
-          // FIX: Replaced ?? with || for better compatibility
           toggleSetting = settings.toggleSetting || 'cubes'
           resolve('Settings loaded')
         })
@@ -89,7 +84,6 @@ const isoJsCode = `
     canvas.style.width = '100%'
     contributionsWrapper.append(canvas)
 
-    // Inject toggle
     let insertLocation = contributionsBox.querySelector('h2')
     if (insertLocation.previousElementSibling && insertLocation.previousElementSibling.nodeName === 'DETAILS') {
       insertLocation = insertLocation.previousElementSibling
@@ -125,17 +119,12 @@ const isoJsCode = `
 
   const handleViewToggle = (event) => {
     setContainerViewType(event.target.dataset.icOption)
-
     for (const toggle of document.querySelectorAll('.ic-toggle-option')) {
       toggle.classList.remove('selected')
     }
-
     event.target.classList.add('selected')
-
     persistSetting('toggleSetting', event.target.dataset.icOption)
     toggleSetting = event.target.dataset.icOption
-
-    // Apply user preference
     document.querySelector(\`.ic-toggle-option.\${toggleSetting}\`).classList.add('selected')
     contributionsBox.classList.add(\`ic-\${toggleSetting}\`)
   }
@@ -151,16 +140,8 @@ const isoJsCode = `
   }
 
   const getCountFromNode = (node) => {
-    // Contribution label formats:
-    // No contributions on January 9th
-    // 1 contribution on January 10th.
-    // 2 contributions on August 31st.
     const contributionMatches = node.innerHTML.match(/(\\d*|No) contributions? on (.*)./)
-
-    if (!contributionMatches) {
-      return 0
-    }
-
+    if (!contributionMatches) return 0
     const dataCount = contributionMatches[1]
     return dataCount === 'No' ? 0 : Number.parseInt(dataCount, 10)
   }
@@ -170,143 +151,55 @@ const isoJsCode = `
   }
 
   const loadStats = () => {
-    let temporaryStreak = 0
-    let temporaryStreakStart = null
-    let longestStreakStart = null
-    let longestStreakEnd = null
-    let currentStreakStart = null
-    let currentStreakEnd = null
-
-    const dayNodes = [...document.querySelectorAll('.js-calendar-graph-table tbody td.ContributionCalendar-day')].map(
-      (d) => {
-        return {
-          date: new Date(d.dataset.date),
-          week: d.dataset.ix,
-          color: getSquareColor(d),
-          tid: d.getAttribute('aria-labelledby')
-        }
-      }
-    )
-
-    const tooltipNodes = [...document.querySelectorAll('.js-calendar-graph tool-tip')].map((t) => {
-      return {
-        tid: t.id,
-        count: getCountFromNode(t)
-      }
-    })
-
-    const data = dayNodes.map((d) => {
-      return {
-        ...d,
-        ...tooltipNodes.find((t) => t.tid === d.tid)
-      }
-    })
-
+    let temporaryStreak = 0, temporaryStreakStart = null, longestStreakStart = null, longestStreakEnd = null, currentStreakStart = null, currentStreakEnd = null
+    const dayNodes = [...document.querySelectorAll('.js-calendar-graph-table tbody td.ContributionCalendar-day')].map(d => ({ date: new Date(d.dataset.date), week: d.dataset.ix, color: getSquareColor(d), tid: d.getAttribute('aria-labelledby') }))
+    const tooltipNodes = [...document.querySelectorAll('.js-calendar-graph tool-tip')].map(t => ({ tid: t.id, count: getCountFromNode(t) }))
+    const data = dayNodes.map(d => ({ ...d, ...tooltipNodes.find(t => t.tid === d.tid) }))
     days = data.sort((a, b) => a.date.getTime() - b.date.getTime())
     weeks = toArray(groupBy(days, 'week'))
     const currentWeekDays = last(weeks)
-
     for (const d of days) {
       const currentDayCount = d.count
       yearTotal += currentDayCount
-
-      if (days[0] === d) {
-        firstDay = d.date
-      }
-
-      if (sameDay(d.date, new Date())) {
-        lastDay = d.date
-      } else if (!lastDay && days.at(-1) === d) {
-        lastDay = d.date
-      }
-
-      // Check for best day
-      if (currentDayCount > maxCount) {
-        bestDay = d.date
-        maxCount = currentDayCount
-      }
-
-      // Check for longest streak
+      if (days[0] === d) firstDay = d.date
+      if (sameDay(d.date, new Date())) lastDay = d.date
+      else if (!lastDay && days.at(-1) === d) lastDay = d.date
+      if (currentDayCount > maxCount) { bestDay = d.date; maxCount = currentDayCount }
       if (currentDayCount > 0) {
-        if (temporaryStreak === 0) {
-          temporaryStreakStart = d.date
-        }
-
+        if (temporaryStreak === 0) temporaryStreakStart = d.date
         temporaryStreak++
-
-        if (temporaryStreak >= streakLongest) {
-          longestStreakStart = temporaryStreakStart
-          longestStreakEnd = d.date
-          streakLongest = temporaryStreak
-        }
-      } else {
-        temporaryStreak = 0
-        temporaryStreakStart = null
-      }
+        if (temporaryStreak >= streakLongest) { longestStreakStart = temporaryStreakStart; longestStreakEnd = d.date; streakLongest = temporaryStreak }
+      } else { temporaryStreak = 0; temporaryStreakStart = null }
     }
-
     for (const d of currentWeekDays) {
       const currentDayCount = d.count
       weekTotal += currentDayCount
-
-      if (currentWeekDays[0] === d) {
-        weekStartDay = d.date
-      }
+      if (currentWeekDays[0] === d) weekStartDay = d.date
     }
-
-    // Check for current streak
-    const reversedDays = days
-    reversedDays.reverse()
+    const reversedDays = [...days].reverse()
     currentStreakEnd = reversedDays[0].date
-
     for (let i = 0; i < reversedDays.length; i++) {
       const currentDayCount = reversedDays[i].count
-      // If there's no activity today, continue on to yesterday
-      if (i === 0 && currentDayCount === 0) {
-        currentStreakEnd = reversedDays[1].date
-        continue
-      }
-
-      if (currentDayCount > 0) {
-        streakCurrent++
-        currentStreakStart = reversedDays[i].date
-      } else {
-        break
-      }
+      if (i === 0 && currentDayCount === 0) { currentStreakEnd = reversedDays[1].date; continue }
+      if (currentDayCount > 0) { streakCurrent++; currentStreakStart = reversedDays[i].date } else break
     }
-
     if (streakCurrent > 0) {
       currentStreakStart = dateFormat.format(currentStreakStart)
       currentStreakEnd = dateFormat.format(currentStreakEnd)
       datesCurrent = \`\${currentStreakStart} → \${currentStreakEnd}\`
-    } else {
-      datesCurrent = 'No current streak'
-    }
-
-    // Year total
+    } else { datesCurrent = 'No current streak' }
     countTotal = yearTotal.toLocaleString()
     const dateFirst = dateFormat.format(firstDay)
     const dateLast = dateFormat.format(lastDay)
     datesTotal = \`\${dateFirst} → \${dateLast}\`
-
-    // Average contributions per day
     const dayDifference = datesDayDifference(firstDay, lastDay)
     averageCount = precisionRound(yearTotal / dayDifference, 2)
-
-    // Best day
-    dateBest = dateFormat.format(bestDay)
-    dateBest ||= 'No activity found'
-
-    // Longest streak
+    dateBest = dateFormat.format(bestDay) || 'No activity found'
     if (streakLongest > 0) {
       longestStreakStart = dateFormat.format(longestStreakStart)
       longestStreakEnd = dateFormat.format(longestStreakEnd)
       datesLongest = \`\${longestStreakStart} → \${longestStreakEnd}\`
-    } else {
-      datesLongest = 'No longest streak'
-    }
-
-    // Week total
+    } else { datesLongest = 'No longest streak' }
     weekCountTotal = weekTotal.toLocaleString()
     const weekDateFirst = dateFormat.format(weekStartDay)
     weekDatesTotal = \`\${weekDateFirst} → \${dateLast}\`
@@ -315,50 +208,29 @@ const isoJsCode = `
   const rgbToHex = (rgb) => {
     const separator = rgb.includes(',') ? ',' : ' '
     rgb = rgb.slice(4).split(')')[0].split(separator)
-
-    let r = Number(rgb[0]).toString(16)
-    let g = Number(rgb[1]).toString(16)
-    let b = Number(rgb[2]).toString(16)
-
-    if (r.length === 1) {
-      r = '0' + r
-    }
-
-    if (g.length === 1) {
-      g = '0' + g
-    }
-
-    if (b.length === 1) {
-      b = '0' + b
-    }
-
+    let r = Number(rgb[0]).toString(16), g = Number(rgb[1]).toString(16), b = Number(rgb[2]).toString(16)
+    if (r.length === 1) r = '0' + r
+    if (g.length === 1) g = '0' + g
+    if (b.length === 1) b = '0' + b
     return r + g + b
   }
 
   const renderIsometricChart = () => {
-    const SIZE = 16
-    const MAX_HEIGHT = 100
-    const GH_OFFSET = 14
+    const SIZE = 16, MAX_HEIGHT = 100, GH_OFFSET = 14
     const canvas = document.querySelector('#isometric-contributions')
     const point = new obelisk.Point(130, 90)
     const pixelView = new obelisk.PixelView(canvas, point)
-
     let transform = GH_OFFSET
-
     for (const w of weeks) {
       const x = transform / (GH_OFFSET + 1)
       transform += GH_OFFSET
-      let offsetY = 0 // Hardcode the old y of rect value.
+      let offsetY = 0
       for (const d of w) {
         const y = offsetY / GH_OFFSET
         offsetY += 13
         const currentDayCount = d.count
         let cubeHeight = 3
-
-        if (maxCount > 0) {
-          cubeHeight += Number.parseInt((MAX_HEIGHT / maxCount) * currentDayCount, 10)
-        }
-
+        if (maxCount > 0) cubeHeight += Number.parseInt((MAX_HEIGHT / maxCount) * currentDayCount, 10)
         const dimension = new obelisk.CubeDimension(SIZE, SIZE, cubeHeight)
         const color = new obelisk.CubeColor().getByHorizontalColor(Number.parseInt(d.color, 16))
         const cube = new obelisk.Cube(dimension, color, false)
@@ -369,83 +241,21 @@ const isoJsCode = `
   }
 
   const renderStats = () => {
-    const graphHeaderText =
-      document.querySelector('.ic-contributions-wrapper').parentNode.previousElementSibling.textContent
+    const graphHeaderText = document.querySelector('.ic-contributions-wrapper').parentNode.previousElementSibling.textContent
     const viewingYear = graphHeaderText.match(/in \\d{4}/g) !== null
-
-    let topMarkup = \`
-      <div class="position-absolute top-0 right-0 mt-3 mr-5">
-        <h5 class="mb-1">Contributions</h5>
-        <div class="d-flex flex-justify-between rounded-2 border px-1 px-md-2">
-          <div class="p-2">
-            <span class="d-block f2 text-bold color-fg-success lh-condensed">\${countTotal}</span>
-            <span class="d-block text-small text-bold">Total</span>
-            <span class="d-none d-sm-block text-small color-fg-muted">\${datesTotal}</span>
-          </div>
-      \`
-    if (!viewingYear) {
-      topMarkup += \`
-        <div class="p-2 d-none d-xl-block">
-          <span class="d-block f2 text-bold color-fg-success lh-condensed">\${weekCountTotal}</span>
-          <span class="d-block text-small text-bold">This week</span>
-          <span class="d-none d-sm-block text-small color-fg-muted">\${weekDatesTotal}</span>
-        </div>
-      \`
-    }
-
-    topMarkup += \`
-        <div class="p-2">
-          <span class="d-block f2 text-bold color-fg-success lh-condensed">\${maxCount}</span>
-          <span class="d-block text-small text-bold">Best day</span>
-          <span class="d-none d-sm-block text-small color-fg-muted">\${dateBest}</span>
-        </div>
-      </div>
-      <p class="mt-1 text-right text-small">
-        Average: <span class="text-bold color-fg-success">\${averageCount}</span> <span class="color-fg-muted">/ day</span>
-        </p>
-      </div>
-    \`
-
-    let bottomMarkup = \`
-      <div class="position-absolute bottom-0 left-0 ml-5 mb-6">
-        <h5 class="mb-1">Streaks</h5>
-        <div class="d-flex flex-justify-between rounded-2 border px-1 px-md-2">
-          <div class="p-2">
-            <span class="d-block f2 text-bold color-fg-success lh-condensed">\${streakLongest} <span class="f4">days</span></span>
-            <span class="d-block text-small text-bold">Longest</span>
-            <span class="d-none d-sm-block text-small color-fg-muted">\${datesLongest}</span>
-          </div>
-      \`
-    if (!viewingYear) {
-      bottomMarkup += \`
-            <div class="p-2">
-              <span class="d-block f2 text-bold color-fg-success lh-condensed">\${streakCurrent} <span class="f4">days</span></span>
-              <span class="d-block text-small text-bold">Current</span>
-              <span class="d-none d-sm-block text-small color-fg-muted">\${datesCurrent}</span>
-            </div>
-          </div>
-        </div>
-      \`
-    }
-
-    const icStatsBlockTop = document.createElement('div')
-    icStatsBlockTop.innerHTML = topMarkup
-    document.querySelector('.ic-contributions-wrapper').append(icStatsBlockTop)
-
-    const icStatsBlockBottom = document.createElement('div')
-    icStatsBlockBottom.innerHTML = bottomMarkup
-    document.querySelector('.ic-contributions-wrapper').append(icStatsBlockBottom)
+    let topMarkup = \`<div class="position-absolute top-0 right-0 mt-3 mr-5"><h5 class="mb-1">Contributions</h5><div class="d-flex flex-justify-between rounded-2 border px-1 px-md-2"><div class="p-2"><span class="d-block f2 text-bold color-fg-success lh-condensed">\${countTotal}</span><span class="d-block text-small text-bold">Total</span><span class="d-none d-sm-block text-small color-fg-muted">\${datesTotal}</span></div>\`
+    if (!viewingYear) topMarkup += \`<div class="p-2 d-none d-xl-block"><span class="d-block f2 text-bold color-fg-success lh-condensed">\${weekCountTotal}</span><span class="d-block text-small text-bold">This week</span><span class="d-none d-sm-block text-small color-fg-muted">\${weekDatesTotal}</span></div>\`
+    topMarkup += \`<div class="p-2"><span class="d-block f2 text-bold color-fg-success lh-condensed">\${maxCount}</span><span class="d-block text-small text-bold">Best day</span><span class="d-none d-sm-block text-small color-fg-muted">\${dateBest}</span></div></div><p class="mt-1 text-right text-small">Average: <span class="text-bold color-fg-success">\${averageCount}</span> <span class="color-fg-muted">/ day</span></p></div>\`
+    let bottomMarkup = \`<div class="position-absolute bottom-0 left-0 ml-5 mb-6"><h5 class="mb-1">Streaks</h5><div class="d-flex flex-justify-between rounded-2 border px-1 px-md-2"><div class="p-2"><span class="d-block f2 text-bold color-fg-success lh-condensed">\${streakLongest} <span class="f4">days</span></span><span class="d-block text-small text-bold">Longest</span><span class="d-none d-sm-block text-small color-fg-muted">\${datesLongest}</span></div>\`
+    if (!viewingYear) bottomMarkup += \`<div class="p-2"><span class="d-block f2 text-bold color-fg-success lh-condensed">\${streakCurrent} <span class="f4">days</span></span><span class="d-block text-small text-bold">Current</span><span class="d-none d-sm-block text-small color-fg-muted">\${datesCurrent}</span></div></div></div>\`
+    const icStatsBlockTop = document.createElement('div'); icStatsBlockTop.innerHTML = topMarkup; document.querySelector('.ic-contributions-wrapper').append(icStatsBlockTop)
+    const icStatsBlockBottom = document.createElement('div'); icStatsBlockBottom.innerHTML = bottomMarkup; document.querySelector('.ic-contributions-wrapper').append(icStatsBlockBottom)
   }
 
   const generateIsometricChart = () => {
     calendarGraph = document.querySelector('.js-calendar-graph')
     contributionsBox = document.querySelector('.js-yearly-contributions')
-
-    resetValues()
-    initUI()
-    loadStats()
-    renderStats()
-    renderIsometricChart()
+    resetValues(); initUI(); loadStats(); renderStats(); renderIsometricChart()
   }
 
   const precisionRound = (number, precision) => {
@@ -455,37 +265,25 @@ const isoJsCode = `
 
   const datesDayDifference = (date1, date2) => {
     let diffDays = null
-
     if (date1 && date2) {
       const timeDiff = Math.abs(date2.getTime() - date1.getTime())
       diffDays = Math.ceil(timeDiff / (1000 * 3600 * 24))
     }
-
     return diffDays
   }
 
   ;(async function () {
-    // Are we on a profile page?
     if (document.querySelector('.vcard-names-container')) {
       await getSettings()
-
       const config = { attributes: true, childList: true, subtree: true }
       const callback = (mutationsList) => {
         for (const mutation of mutationsList) {
-          if (
-            mutation.type === 'childList' &&
-            document.querySelector('.js-calendar-graph') &&
-            !document.querySelector('.ic-contributions-wrapper')
-          ) {
+          if (mutation.type === 'childList' && document.querySelector('.js-calendar-graph') && !document.querySelector('.ic-contributions-wrapper')) {
             generateIsometricChart()
           }
         }
       }
-
-      globalThis.matchMedia('(prefers-color-scheme: dark)').addListener(() => {
-        renderIsometricChart()
-      })
-
+      globalThis.matchMedia('(prefers-color-scheme: dark)').addListener(() => renderIsometricChart())
       const observedContainer = document.querySelector('html')
       const observer = new MutationObserver(callback)
       observer.observe(observedContainer, config)
@@ -504,7 +302,7 @@ async function generateImage() {
   await page.setViewport({ width: 1200, height: 800 });
 
   console.log('Navigating to GitHub profile...');
-  // IMPORTANT: Change 'jasonlong' to your GitHub username
+  // IMPORTANT: Change 'klaudioz' to your GitHub username if it's different
   await page.goto('https://github.com/klaudioz', { waitUntil: 'networkidle0' });
 
   console.log('Injecting scripts...');
