@@ -1,0 +1,36 @@
+name: Generate Isometric Contributions Image
+
+on:
+  schedule:
+    - cron: "0 1 * * *" # Runs daily at 1 AM
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      # Install dependencies for Puppeteer
+      - name: Install Chrome Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -yq libgconf-2-4 libatk1.0-0 libatk-bridge2.0-0 libgdk-pixbuf2.0-0 libgtk-3-0 libgbm-dev libnss3-dev libxss1
+
+      - run: npm install puppeteer
+
+      # Run the script to generate the image
+      - name: Generate Image
+        run: node generate-image.js
+
+      # Commit the new image back to the repo
+      - name: Commit Image
+        uses: EndBug/add-and-commit@v9
+        with:
+          author_name: Isometric Bot
+          author_email: bot@example.com
+          message: "feat: Update isometric contributions image"
+          add: "iso-contributions.png"
