@@ -144,7 +144,7 @@ async function generateImage() {
   });
 
   // Wait a bit for rendering to complete
-  await page.waitForTimeout(2000);
+  await new Promise(resolve => setTimeout(resolve, 2000));
 
   console.log('Taking screenshot...');
   const canvas = await page.$('#isometric-contributions');
