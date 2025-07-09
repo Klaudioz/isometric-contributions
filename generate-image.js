@@ -42,10 +42,13 @@ async function generateImage() {
   // Inject obelisk
   await page.evaluate(obeliskJsCode);
 
-  // Create the canvas and render the isometric view
-  console.log('Creating isometric view...');
+  // Create the complete isometric view with stats
+  console.log('Creating isometric view with stats...');
   await page.evaluate(() => {
     // Helper functions from iso.js
+    const dateFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    const sameDay = (d1, d2) => d1.toDateString() === d2.toDateString();
+    
     const getCountFromNode = (node) => {
       const contributionMatches = node.innerHTML.match(/(\d*|No) contributions? on (.*)./);
       if (!contributionMatches) return 0;
@@ -64,6 +67,20 @@ async function generateImage() {
       if (g.length === 1) g = '0' + g;
       if (b.length === 1) b = '0' + b;
       return r + g + b;
+    };
+
+    const precisionRound = (number, precision) => {
+      const factor = 10 ** precision;
+      return Math.round(number * factor) / factor;
+    };
+
+    const datesDayDifference = (date1, date2) => {
+      let diffDays = null;
+      if (date1 && date2) {
+        const timeDiff = Math.abs(date2.getTime() - date1.getTime());
+        diffDays = Math.ceil(timeDiff / (1000 * 3600 * 24));
+      }
+      return diffDays;
     };
 
     // Load contribution data
@@ -88,27 +105,141 @@ async function generateImage() {
 
     const days = data.sort((a, b) => a.date.getTime() - b.date.getTime());
     const weeks = window._.toArray(window._.groupBy(days, 'week'));
+    const currentWeekDays = window._.last(weeks);
     
+    // Calculate stats
+    let yearTotal = 0;
+    let weekTotal = 0;
     let maxCount = 0;
+    let streakLongest = 0;
+    let streakCurrent = 0;
+    let bestDay = null;
+    let firstDay = null;
+    let lastDay = null;
+    let weekStartDay = null;
+    let temporaryStreak = 0;
+    let temporaryStreakStart = null;
+    let longestStreakStart = null;
+    let longestStreakEnd = null;
+    let currentStreakStart = null;
+    let currentStreakEnd = null;
+
     for (const d of days) {
-      if (d.count > maxCount) {
-        maxCount = d.count;
+      const currentDayCount = d.count;
+      yearTotal += currentDayCount;
+
+      if (days[0] === d) {
+        firstDay = d.date;
+      }
+
+      if (sameDay(d.date, new Date())) {
+        lastDay = d.date;
+      } else if (!lastDay && days.at(-1) === d) {
+        lastDay = d.date;
+      }
+
+      if (currentDayCount > maxCount) {
+        bestDay = d.date;
+        maxCount = currentDayCount;
+      }
+
+      if (currentDayCount > 0) {
+        if (temporaryStreak === 0) {
+          temporaryStreakStart = d.date;
+        }
+        temporaryStreak++;
+        if (temporaryStreak >= streakLongest) {
+          longestStreakStart = temporaryStreakStart;
+          longestStreakEnd = d.date;
+          streakLongest = temporaryStreak;
+        }
+      } else {
+        temporaryStreak = 0;
+        temporaryStreakStart = null;
       }
     }
 
-    // Create canvas
-    const contributionsWrapper = document.createElement('div');
-    contributionsWrapper.className = 'ic-contributions-wrapper position-relative';
-    contributionsWrapper.style.width = '1000px';
-    contributionsWrapper.style.height = '600px';
-    contributionsWrapper.style.margin = '20px';
-    document.body.appendChild(contributionsWrapper);
+    for (const d of currentWeekDays) {
+      const currentDayCount = d.count;
+      weekTotal += currentDayCount;
+      if (currentWeekDays[0] === d) {
+        weekStartDay = d.date;
+      }
+    }
+
+    // Check for current streak
+    const reversedDays = [...days].reverse();
+    currentStreakEnd = reversedDays[0].date;
+
+    for (let i = 0; i < reversedDays.length; i++) {
+      const currentDayCount = reversedDays[i].count;
+      if (i === 0 && currentDayCount === 0) {
+        currentStreakEnd = reversedDays[1].date;
+        continue;
+      }
+      if (currentDayCount > 0) {
+        streakCurrent++;
+        currentStreakStart = reversedDays[i].date;
+      } else {
+        break;
+      }
+    }
+
+    // Format stats
+    const countTotal = yearTotal.toLocaleString();
+    const dateFirst = dateFormat.format(firstDay);
+    const dateLast = dateFormat.format(lastDay);
+    const datesTotal = `${dateFirst} → ${dateLast}`;
+    const dayDifference = datesDayDifference(firstDay, lastDay);
+    const averageCount = precisionRound(yearTotal / dayDifference, 2);
+    const dateBest = bestDay ? dateFormat.format(bestDay) : 'No activity found';
+    const weekCountTotal = weekTotal.toLocaleString();
+    const weekDateFirst = dateFormat.format(weekStartDay);
+    const weekDatesTotal = `${weekDateFirst} → ${dateLast}`;
+
+    let datesCurrent = 'No current streak';
+    if (streakCurrent > 0) {
+      const currentStart = dateFormat.format(currentStreakStart);
+      const currentEnd = dateFormat.format(currentStreakEnd);
+      datesCurrent = `${currentStart} → ${currentEnd}`;
+    }
+
+    let datesLongest = 'No longest streak';
+    if (streakLongest > 0) {
+      const longestStart = dateFormat.format(longestStreakStart);
+      const longestEnd = dateFormat.format(longestStreakEnd);
+      datesLongest = `${longestStart} → ${longestEnd}`;
+    }
+
+    // Clear the page and create our container
+    document.body.innerHTML = '';
+    document.body.style.margin = '0';
+    document.body.style.padding = '20px';
+    document.body.style.backgroundColor = '#ffffff';
+    document.body.style.fontFamily = '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif';
+
+    // Create main container
+    const mainContainer = document.createElement('div');
+    mainContainer.style.position = 'relative';
+    mainContainer.style.width = '1000px';
+    mainContainer.style.height = '600px';
+    mainContainer.style.backgroundColor = '#ffffff';
+    document.body.appendChild(mainContainer);
+
+    // Create canvas container
+    const canvasContainer = document.createElement('div');
+    canvasContainer.style.position = 'absolute';
+    canvasContainer.style.left = '0';
+    canvasContainer.style.top = '0';
+    canvasContainer.style.width = '100%';
+    canvasContainer.style.height = '100%';
+    mainContainer.appendChild(canvasContainer);
 
     const canvas = document.createElement('canvas');
     canvas.id = 'isometric-contributions';
     canvas.width = 1000;
     canvas.height = 600;
-    contributionsWrapper.appendChild(canvas);
+    canvasContainer.appendChild(canvas);
 
     // Render isometric chart
     const SIZE = 16;
@@ -141,18 +272,77 @@ async function generateImage() {
         pixelView.renderObject(cube, p3d);
       }
     }
+
+    // Add stats overlay
+    const statsTop = document.createElement('div');
+    statsTop.style.position = 'absolute';
+    statsTop.style.top = '40px';
+    statsTop.style.right = '80px';
+    statsTop.style.fontSize = '14px';
+    statsTop.style.color = '#24292e';
+    statsTop.innerHTML = `
+      <div style="margin-bottom: 24px;">
+        <h3 style="margin: 0 0 12px 0; font-size: 20px; font-weight: 600;">Contributions</h3>
+        <div style="display: flex; background: #f6f8fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 8px;">
+          <div style="padding: 12px 16px;">
+            <div style="font-size: 32px; font-weight: bold; color: #28a745; line-height: 1;">${countTotal}</div>
+            <div style="font-size: 12px; font-weight: 600; margin-top: 4px;">Total</div>
+            <div style="font-size: 11px; color: #586069; margin-top: 2px;">${datesTotal}</div>
+          </div>
+          <div style="padding: 12px 16px;">
+            <div style="font-size: 32px; font-weight: bold; color: #28a745; line-height: 1;">${maxCount}</div>
+            <div style="font-size: 12px; font-weight: 600; margin-top: 4px;">Best day</div>
+            <div style="font-size: 11px; color: #586069; margin-top: 2px;">${dateBest}</div>
+          </div>
+        </div>
+        <p style="margin: 8px 0 0 0; text-align: right; font-size: 12px; color: #586069;">
+          Average: <span style="font-weight: bold; color: #28a745;">${averageCount}</span> <span style="color: #586069;">/ day</span>
+        </p>
+      </div>
+    `;
+    mainContainer.appendChild(statsTop);
+
+    const statsBottom = document.createElement('div');
+    statsBottom.style.position = 'absolute';
+    statsBottom.style.bottom = '40px';
+    statsBottom.style.left = '80px';
+    statsBottom.style.fontSize = '14px';
+    statsBottom.style.color = '#24292e';
+    statsBottom.innerHTML = `
+      <div>
+        <h3 style="margin: 0 0 12px 0; font-size: 20px; font-weight: 600;">Streaks</h3>
+        <div style="display: flex; background: #f6f8fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 8px;">
+          <div style="padding: 12px 16px;">
+            <div style="font-size: 32px; font-weight: bold; color: #28a745; line-height: 1;">
+              ${streakLongest} <span style="font-size: 16px; font-weight: normal;">days</span>
+            </div>
+            <div style="font-size: 12px; font-weight: 600; margin-top: 4px;">Longest</div>
+            <div style="font-size: 11px; color: #586069; margin-top: 2px;">${datesLongest}</div>
+          </div>
+          <div style="padding: 12px 16px;">
+            <div style="font-size: 32px; font-weight: bold; color: #28a745; line-height: 1;">
+              ${streakCurrent} <span style="font-size: 16px; font-weight: normal;">days</span>
+            </div>
+            <div style="font-size: 12px; font-weight: 600; margin-top: 4px;">Current</div>
+            <div style="font-size: 11px; color: #586069; margin-top: 2px;">${datesCurrent}</div>
+          </div>
+        </div>
+      </div>
+    `;
+    mainContainer.appendChild(statsBottom);
   });
 
   // Wait a bit for rendering to complete
   await new Promise(resolve => setTimeout(resolve, 2000));
 
   console.log('Taking screenshot...');
-  const canvas = await page.$('#isometric-contributions');
-  if (!canvas) {
-    throw new Error('Canvas element was not created');
+  // Screenshot the entire container with stats
+  const element = await page.$('body > div');
+  if (!element) {
+    throw new Error('Main container was not created');
   }
   
-  await canvas.screenshot({ path: 'iso-contributions.png' });
+  await element.screenshot({ path: 'iso-contributions.png' });
 
   console.log('Closing browser.');
   await browser.close();
